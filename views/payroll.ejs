@@ -297,6 +297,12 @@ async function generatePayroll() {
 }
 
 async function processPayments() {
+  const ungeneratedCount = payrollData.filter(r => r.st === 'Pending').length;
+  if (ungeneratedCount > 0) {
+    showToast('Please Generate Payroll first before processing payments.', 'error');
+    return;
+  }
+  
   const pendingCount = payrollData.filter(r => r.st !== 'Paid').length;
   if (pendingCount === 0) {
     showToast('All payments have already been processed.', 'info');

@@ -45,7 +45,13 @@ const actions = `
        data-name="<%= eName.toLowerCase() %>"
        data-dept="<%= eDept.toLowerCase() %>"
        data-status="<%= eStatus %>">
-    <div class="emp-card-avatar" style="background:<%= eColor %>"><%= eInits %></div>
+    <div class="emp-card-avatar" style="background:<%= eColor %>">
+      <% if (e.picture) { %>
+        <img src="<%= e.picture %>" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" alt="Avatar" />
+      <% } else { %>
+        <%= eInits %>
+      <% } %>
+    </div>
     <div class="emp-card-name"><%= eName %></div>
     <div class="emp-card-pos"><%= ePos %></div>
     <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin:4px 0;">
@@ -59,7 +65,7 @@ const actions = `
       <button class="btn btn-outline" style="color:#ef4444;border-color:#fca5a5;font-size:12px;padding:5px 12px;" type="button"
         onclick="deleteEmployee('<%= eId %>', '<%= eName.replace(/'/g,"\\'") %>')">Delete</button>
       <button class="btn btn-primary" style="font-size:12px;padding:5px 12px;" type="button"
-        onclick="editEmployee('<%= eId %>', '<%= eName.replace(/'/g,"\\'") %>', '<%= ePos.replace(/'/g,"\\'") %>', '<%= eDept %>', '<%= eEmail %>', '<%= ePhone %>', '<%= eJoin %>', '<%= eStatus %>', '<%= eSalary %>')">Edit</button>
+        onclick="editEmployee('<%= eId %>', '<%= eName.replace(/'/g,"\\'") %>', '<%= ePos.replace(/'/g,"\\'") %>', '<%= eDept %>', '<%= eEmail %>', '<%= ePhone %>', '<%= eJoin %>', '<%= eStatus %>', '<%= eSalary %>', '<%= (e.location||'').replace(/'/g,"\\'") %>', '<%= (e.picture||'').replace(/'/g,"\\'") %>')">Edit</button>
     </div>
   </div>
   <% }) %>
@@ -93,7 +99,7 @@ const actions = `
           </div>
           <div class="form-group">
             <label class="form-label">Phone Number</label>
-            <input class="form-input" id="fPhone" type="tel" placeholder="+1 555-0000" />
+            <input class="form-input" id="fPhone" type="tel" placeholder="0300-0000000" />
           </div>
           <div class="form-group">
             <label class="form-label">Department *</label>
@@ -129,6 +135,10 @@ const actions = `
           <div class="form-group">
             <label class="form-label">Monthly Salary ($)</label>
             <input class="form-input" id="fMonthlySalary" type="number" step="100" placeholder="e.g. 5000" value="5000" />
+          </div>
+          <div class="form-group" style="grid-column: span 2;">
+            <label class="form-label">Profile Picture URL (optional)</label>
+            <input class="form-input" id="fPicture" type="url" placeholder="https://example.com/avatar.png" />
           </div>
         </div>
       </form>
@@ -167,7 +177,7 @@ const actions = `
           </div>
           <div class="form-group">
             <label class="form-label">Phone Number</label>
-            <input class="form-input" id="editPhone" type="tel" />
+            <input class="form-input" id="editPhone" type="tel" placeholder="0300-0000000" />
           </div>
           <div class="form-group">
             <label class="form-label">Department *</label>
@@ -203,6 +213,10 @@ const actions = `
           <div class="form-group">
             <label class="form-label">Monthly Salary ($)</label>
             <input class="form-input" id="editMonthlySalary" type="number" step="100" />
+          </div>
+          <div class="form-group" style="grid-column: span 2;">
+            <label class="form-label">Profile Picture URL (optional)</label>
+            <input class="form-input" id="editPicture" type="url" placeholder="https://example.com/avatar.png" />
           </div>
         </div>
       </form>
@@ -248,6 +262,7 @@ async function submitAddEmployee(e) {
   const status    = document.getElementById('fStatus').value;
   const monthlySalary = parseFloat(document.getElementById('fMonthlySalary').value) || 5000;
   const loc      = document.getElementById('fLocation').value;
+  const picture  = document.getElementById('fPicture').value.trim();
 
   if (!firstName || !lastName || !email || !position || !dept || !phone || !loc || !joinDate || !status) {
     showToast('Please fill in all fields. No fields can be empty.', 'error');
@@ -258,9 +273,9 @@ async function submitAddEmployee(e) {
     showToast('Please enter a valid email address.', 'error');
     return;
   }
-  const phoneRegex = /^0-\d{3}-\d{7}$/;
-  if (!phoneRegex.test(phone)) {
-    showToast('Phone number must be in format: 0-300-0000000', 'error');
+  const phoneRegex = /^0\d{3}-\d{7}$/;
+  if (phone !== '--' && !phoneRegex.test(phone)) {
+    showToast('Phone number must be in format: 0300-0000000', 'error');
     return;
   }
 
@@ -281,7 +296,8 @@ async function submitAddEmployee(e) {
       status,
       joindate: joinDate,
       monthly_salary: monthlySalary,
-      location: loc
+      location: loc,
+      picture
     };
 
   try {
@@ -299,7 +315,9 @@ async function submitAddEmployee(e) {
     card.dataset.dept   = dept.toLowerCase();
     card.dataset.status = status;
     card.innerHTML = `
-      <div class="emp-card-avatar" style="background:${color}">${initials}</div>
+      <div class="emp-card-avatar" style="background:${color}">
+        ${picture ? `<img src="${picture}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" alt="Avatar" />` : initials}
+      </div>
       <div class="emp-card-name">${fullName}</div>
       <div class="emp-card-pos">${position}</div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin:4px 0;">
@@ -342,7 +360,7 @@ async function deleteEmployee(id, name) {
   }
 }
 
-function editEmployee(id, name, position, dept, email, phone, joinDate, status, monthlySalary, location) {
+function editEmployee(id, name, position, dept, email, phone, joinDate, status, monthlySalary, location, picture) {
   document.getElementById('editEmpId').value = id;
   document.getElementById('editName').value = name;
   document.getElementById('editPosition').value = position;
@@ -353,6 +371,7 @@ function editEmployee(id, name, position, dept, email, phone, joinDate, status, 
   document.getElementById('editStatus').value = status;
   document.getElementById('editMonthlySalary').value = monthlySalary || 5000;
   document.getElementById('editLocation').value = location || '';
+  document.getElementById('editPicture').value = picture || '';
   openModal('modalEditEmp');
 }
 
@@ -368,6 +387,7 @@ async function submitEditEmployee(e) {
   const status = document.getElementById('editStatus').value;
   const monthlySalary = parseFloat(document.getElementById('editMonthlySalary').value) || 5000;
   const loc = document.getElementById('editLocation').value;
+  const picture = document.getElementById('editPicture').value.trim();
 
   if (!name || !email || !position || !dept || !phone || !loc || !joinDate || !status) {
     showToast('Please fill in all fields. No fields can be empty.', 'error');
@@ -378,9 +398,9 @@ async function submitEditEmployee(e) {
     showToast('Please enter a valid email address.', 'error');
     return;
   }
-  const phoneRegex = /^0-\d{3}-\d{7}$/;
-  if (!phoneRegex.test(phone)) {
-    showToast('Phone number must be in format: 0-300-0000000', 'error');
+  const phoneRegex = /^0\d{3}-\d{7}$/;
+  if (phone !== '--' && !phoneRegex.test(phone)) {
+    showToast('Phone number must be in format: 0300-0000000', 'error');
     return;
   }
 
@@ -393,7 +413,8 @@ async function submitEditEmployee(e) {
       status,
       joindate: joinDate,
       monthly_salary: monthlySalary,
-      location: loc
+      location: loc,
+      picture
     };
 
   try {

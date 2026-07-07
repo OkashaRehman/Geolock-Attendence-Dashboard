@@ -100,9 +100,15 @@ app.get('/', (req, res) => res.redirect('/dashboard'));
 
 app.get('/dashboard', async (req, res) => {
   try {
-    const { data: employees, error: empErr } = await supabase.from('employees').select('*');
-    const { data: attendance, error: attErr } = await supabase.from('attendance').select('*');
-    const { data: locations, error: locErr } = await supabase.from('locations').select('*');
+    const [
+      { data: employees, error: empErr },
+      { data: attendance, error: attErr },
+      { data: locations, error: locErr }
+    ] = await Promise.all([
+      supabase.from('employees').select('*'),
+      supabase.from('attendance').select('*'),
+      supabase.from('locations').select('*')
+    ]);
     if (empErr) throw empErr;
     if (attErr) throw attErr;
     if (locErr) throw locErr;
@@ -178,8 +184,13 @@ app.get('/dashboard', async (req, res) => {
 
 app.get('/employees', async (req, res) => {
   try {
-    const { data: employees, error } = await supabase.from('employees').select('*');
-    const { data: locations } = await supabase.from('locations').select('*');
+    const [
+      { data: employees, error },
+      { data: locations }
+    ] = await Promise.all([
+      supabase.from('employees').select('*'),
+      supabase.from('locations').select('*')
+    ]);
     if (error) throw error;
     // Normalize DB column names to what the template expects
     const normalized = (employees || []).map(e => ({
@@ -197,8 +208,13 @@ app.get('/employees', async (req, res) => {
 
 app.get('/attendance', async (req, res) => {
   try {
-    const { data: employees } = await supabase.from('employees').select('*');
-    const { data: attendance } = await supabase.from('attendance').select('*');
+    const [
+      { data: employees },
+      { data: attendance }
+    ] = await Promise.all([
+      supabase.from('employees').select('*'),
+      supabase.from('attendance').select('*')
+    ]);
 
     const records = (attendance || []).map(a => {
       const emp = (employees || []).find(e => e.user_id === a.user_id);
@@ -223,9 +239,15 @@ app.get('/attendance', async (req, res) => {
 
 app.get('/locations', async (req, res) => {
   try {
-    const { data: locations } = await supabase.from('locations').select('*');
-    const { data: employees } = await supabase.from('employees').select('*');
-    const { data: attendance } = await supabase.from('attendance').select('*');
+    const [
+      { data: locations },
+      { data: employees },
+      { data: attendance }
+    ] = await Promise.all([
+      supabase.from('locations').select('*'),
+      supabase.from('employees').select('*'),
+      supabase.from('attendance').select('*')
+    ]);
 
     const locList = (locations || []).map(loc => {
       const empCount = (employees || []).filter(e => e.location === loc.name).length;
@@ -265,8 +287,13 @@ app.get('/locations', async (req, res) => {
 
 app.get('/reports', async (req, res) => {
   try {
-    const { data: employees } = await supabase.from('employees').select('*');
-    const { data: attendance } = await supabase.from('attendance').select('*');
+    const [
+      { data: employees },
+      { data: attendance }
+    ] = await Promise.all([
+      supabase.from('employees').select('*'),
+      supabase.from('attendance').select('*')
+    ]);
 
     const now = new Date();
     const currMonth = now.getMonth();
@@ -366,11 +393,16 @@ app.get('/reports', async (req, res) => {
 
 app.get('/payroll', async (req, res) => {
   try {
-    const { data: employees } = await supabase.from('employees').select('*');
-    const { data: attendance } = await supabase.from('attendance').select('*');
-    
     const currMonth = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
-    const { data: savedPayroll } = await supabase.from('payroll').select('*').eq('month', currMonth);
+    const [
+      { data: employees },
+      { data: attendance },
+      { data: savedPayroll }
+    ] = await Promise.all([
+      supabase.from('employees').select('*'),
+      supabase.from('attendance').select('*'),
+      supabase.from('payroll').select('*').eq('month', currMonth)
+    ]);
 
     let totalGross = 0, totalNet = 0, paidCount = 0, otHours = 0;
     const deptPayMap = {};
@@ -438,13 +470,18 @@ app.get('/payroll', async (req, res) => {
 // API Routes for Employees
   async function syncLocationEmployeeCounts() {
     try {
-      const { data: emps } = await supabase.from('employees').select('location');
-      const { data: locs } = await supabase.from('locations').select('id, name');
+      const [
+        { data: emps },
+        { data: locs }
+      ] = await Promise.all([
+        supabase.from('employees').select('location'),
+        supabase.from('locations').select('id, name')
+      ]);
       if (!emps || !locs) return;
-      for (let loc of locs) {
+      await Promise.all(locs.map(loc => {
         const count = emps.filter(e => e.location === loc.name).length;
-        await supabase.from('locations').update({ employees: count }).eq('id', loc.id);
-      }
+        return supabase.from('locations').update({ employees: count }).eq('id', loc.id);
+      }));
     } catch (err) {
       console.error("Failed to sync location counts:", err);
     }
@@ -482,16 +519,22 @@ app.post('/api/locations', async (req, res) => {
 app.post('/api/payroll/generate', async (req, res) => {
   try {
     const currMonth = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
-    const { data: employees } = await supabase.from('employees').select('*');
-    const { data: attendance } = await supabase.from('attendance').select('*');
-    const { data: savedPayroll } = await supabase.from('payroll').select('*').eq('month', currMonth);
+    const [
+      { data: employees },
+      { data: attendance },
+      { data: savedPayroll }
+    ] = await Promise.all([
+      supabase.from('employees').select('*'),
+      supabase.from('attendance').select('*'),
+      supabase.from('payroll').select('*').eq('month', currMonth)
+    ]);
     
     if(!employees || employees.length === 0) return res.json({ success: true, count: 0 });
 
     let count = 0;
-    for (let e of employees) {
+    await Promise.all(employees.map(async (e) => {
       const saved = (savedPayroll || []).find(p => p.user_id === e.user_id);
-      if (saved && saved.status === 'Paid') continue; // Skip if already paid
+      if (saved && saved.status === 'Paid') return; // Skip if already paid
       
       const att = (attendance || []).filter(a => a.user_id === e.user_id);
       let daysWorked = 0; 
@@ -521,7 +564,7 @@ app.post('/api/payroll/generate', async (req, res) => {
         await supabase.from('payroll').insert([record]);
       }
       count++;
-    }
+    }));
     res.json({ success: true, count });
   } catch (err) {
     console.error(err);
