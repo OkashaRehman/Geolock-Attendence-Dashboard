@@ -282,23 +282,22 @@ async function submitAddEmployee(e) {
   const fullName = firstName + ' ' + lastName;
   const initials = (firstName[0] + lastName[0]).toUpperCase();
   const color    = empColors[(empCounter - 1) % empColors.length];
-  const empId    = 'EMP' + String(empCounter).padStart(3, '0');
   
-    const payload = {
-      id: empId,
-      name: fullName,
-      initials,
-      color,
-      department: dept,
-      position,
-      email,
-      phone,
-      status,
-      joindate: joinDate,
-      monthly_salary: monthlySalary,
-      location: loc,
-      picture
-    };
+  // Payload maps to the profiles table columns
+  const payload = {
+    name: fullName,       // server maps this → full_name
+    initials,
+    color,
+    department: dept,
+    position,
+    email,
+    phone,
+    status,
+    joindate: joinDate,
+    monthly_salary: monthlySalary,
+    location: loc,
+    picture
+  };
 
   try {
     const res = await fetch('/api/employees', {

@@ -2,12 +2,20 @@ require('dotenv').config();
 const { createClient } = require('@supabase/supabase-js');
 
 const supabaseUrl = process.env.SUPABASE_URL || 'https://placeholder.supabase.co';
-const supabaseKey = process.env.SUPABASE_KEY || 'placeholder';
 
-if (!process.env.SUPABASE_URL || !process.env.SUPABASE_KEY) {
-  console.warn("⚠️ Missing Supabase URL or Key in environment variables. Using placeholder. Please add them in Vercel settings.");
+// Use Service Role Key if available (bypasses RLS — required for server-side reads).
+// Fall back to the publishable key if not set.
+const supabaseKey = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY || 'placeholder';
+
+if (!process.env.SUPABASE_URL) {
+  console.warn("⚠️  Missing SUPABASE_URL in environment variables.");
+}
+if (!process.env.SUPABASE_SERVICE_KEY) {
+  console.warn("⚠️  SUPABASE_SERVICE_KEY not set — falling back to publishable key. RLS-protected tables (profiles, attendance) may return empty. Add SUPABASE_SERVICE_KEY to .env and Vercel settings.");
 }
 
-const supabase = createClient(supabaseUrl, supabaseKey);
+const supabase = createClient(supabaseUrl, supabaseKey, {
+  auth: { persistSession: false }
+});
 
 module.exports = supabase;
