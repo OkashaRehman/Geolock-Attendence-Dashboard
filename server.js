@@ -38,6 +38,20 @@ function normalizeProfile(p) {
   };
 }
 
+// ─── Helper: normalize an organizations row into the shape the dashboard expects ─
+function normalizeOrg(o) {
+  return {
+    ...o,
+    name:    o.name || 'Unknown',
+    lat:     o.office_latitude  || null,
+    lng:     o.office_longitude || null,
+    radius:  o.geofence_radius_meters || 100,
+    address: o.address || (o.office_latitude ? `${Number(o.office_latitude).toFixed(4)}, ${Number(o.office_longitude).toFixed(4)}` : '--'),
+    status:  o.status || 'Active',
+    employees: o.employees || 0,
+  };
+}
+
 // ─── Auth Middleware ──────────────────────────────────────────────────────────
 const requireAuth = (req, res, next) => {
   if (req.cookies.admin_session) {
@@ -62,18 +76,26 @@ app.post('/api/settings/password', async (req, res) => {
   }
 
   try {
-    const { data: admin, error } = await supabase.from('admins').select('*').eq('id', adminId).single();
-    if (error || !admin) {
+    // 1. Get user email from profiles
+    const { data: profile, error: profileErr } = await supabase.from('profiles').select('email').eq('id', adminId).single();
+    if (profileErr || !profile) {
       return res.redirect('/settings/account?msg=User%20not%20found&type=error');
     }
 
-    const isMatch = await bcrypt.compare(currentPassword, admin.password_hash);
-    if (!isMatch) {
+    // 2. Verify current password by signing in
+    const { data: authData, error: authErr } = await supabase.auth.signInWithPassword({
+      email: profile.email,
+      password: currentPassword
+    });
+
+    if (authErr) {
       return res.redirect('/settings/account?msg=Incorrect%20current%20password&type=error');
     }
 
-    const newHash = await bcrypt.hash(newPassword, 10);
-    const { error: updateErr } = await supabase.from('admins').update({ password_hash: newHash }).eq('id', adminId);
+    // 3. Update password using admin API
+    const { error: updateErr } = await supabase.auth.admin.updateUserById(adminId, {
+      password: newPassword
+    });
     
     if (updateErr) throw updateErr;
 
@@ -91,17 +113,28 @@ app.get('/login', (req, res) => {
 });
 
 app.post('/login', async (req, res) => {
-  const { username, password } = req.body;
+  const { email, password } = req.body;
   try {
-    const { data, error } = await supabase.from('admins').select('*').eq('username', username).single();
-    if (error || !data) {
-      return res.render('login', { error: 'Invalid username or password' });
+    // 1. Authenticate with Supabase Auth
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ email, password });
+    
+    if (authError || !authData.user) {
+      return res.render('login', { error: 'Invalid email or password' });
     }
-    const isMatch = await bcrypt.compare(password, data.password_hash);
-    if (!isMatch) {
-      return res.render('login', { error: 'Invalid username or password' });
+
+    // 2. Check if the user is an admin in the profiles table
+    const { data: profileData, error: profileError } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', authData.user.id)
+      .single();
+
+    if (profileError || !profileData || profileData.role !== 'admin') {
+      return res.render('login', { error: 'Access denied: User is not an admin' });
     }
-    res.cookie('admin_session', data.id, { httpOnly: true, maxAge: 24 * 60 * 60 * 1000 });
+
+    // 3. Set the cookie and log them in
+    res.cookie('admin_session', authData.user.id, { httpOnly: true, maxAge: 24 * 60 * 60 * 1000 });
     res.redirect('/');
   } catch (err) {
     res.render('login', { error: 'An error occurred during login' });
@@ -125,17 +158,18 @@ app.get('/dashboard', async (req, res) => {
     const [
       { data: rawProfiles, error: empErr },
       { data: attendance, error: attErr },
-      { data: locations, error: locErr }
+      { data: rawOrgs, error: locErr }
     ] = await Promise.all([
-      supabase.from('profiles').select('*').eq('role', 'employee'),
+      supabase.from('profiles').select('*'),
       supabase.from('attendance').select('*'),
-      supabase.from('locations').select('*')
+      supabase.from('organizations').select('*')
     ]);
     if (empErr) throw empErr;
     if (attErr) throw attErr;
     if (locErr) throw locErr;
 
-    const employees = (rawProfiles || []).map(normalizeProfile);
+    const employees  = (rawProfiles || []).map(normalizeProfile);
+    const locations  = (rawOrgs     || []).map(normalizeOrg);
 
     const stats = {
       totalEmployees: employees.length,
@@ -208,14 +242,15 @@ app.get('/employees', async (req, res) => {
   try {
     const [
       { data: rawProfiles, error },
-      { data: locations }
+      { data: rawOrgs }
     ] = await Promise.all([
-      supabase.from('profiles').select('*').eq('role', 'employee'),
-      supabase.from('locations').select('*')
+      supabase.from('profiles').select('*'),
+      supabase.from('organizations').select('*')
     ]);
     if (error) throw error;
     const employees = (rawProfiles || []).map(normalizeProfile);
-    res.render('employees', { page: 'employees', employees, locations: locations || [] });
+    const locations = (rawOrgs     || []).map(normalizeOrg);
+    res.render('employees', { page: 'employees', employees, locations });
   } catch (err) {
     console.error('Employees route error:', err.message);
     res.status(500).json({ error: 'Failed to load employees: ' + err.message });
@@ -226,13 +261,16 @@ app.get('/attendance', async (req, res) => {
   try {
     const [
       { data: rawProfiles },
-      { data: attendance }
+      { data: attendance },
+      { data: rawOrgs }
     ] = await Promise.all([
-      supabase.from('profiles').select('*').eq('role', 'employee'),
-      supabase.from('attendance').select('*')
+      supabase.from('profiles').select('*'),
+      supabase.from('attendance').select('*'),
+      supabase.from('organizations').select('*')
     ]);
 
     const employees = (rawProfiles || []).map(normalizeProfile);
+    const locations = (rawOrgs || []).map(normalizeOrg);
 
     const records = (attendance || []).map(a => {
       const emp = employees.find(e => e.user_id === a.user_id);
@@ -248,7 +286,7 @@ app.get('/attendance', async (req, res) => {
       late:    records.filter(r => r.status === 'late').length,
       absent:  records.filter(r => r.status === 'absent').length,
     };
-    res.render('attendance', { page: 'attendance', records, stats });
+    res.render('attendance', { page: 'attendance', records, stats, employees, locations });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to load attendance: " + err.message });
@@ -258,24 +296,28 @@ app.get('/attendance', async (req, res) => {
 app.get('/locations', async (req, res) => {
   try {
     const [
-      { data: locations },
+      { data: rawOrgs },
       { data: rawProfiles },
       { data: attendance }
     ] = await Promise.all([
-      supabase.from('locations').select('*'),
-      supabase.from('profiles').select('*').eq('role', 'employee'),
+      supabase.from('organizations').select('*'),
+      supabase.from('profiles').select('*'),
       supabase.from('attendance').select('*')
     ]);
 
+    const locations = (rawOrgs     || []).map(normalizeOrg);
     const employees = (rawProfiles || []).map(normalizeProfile);
 
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
 
-    const locList = (locations || []).map(loc => {
+    const locList = locations.map(loc => {
       const empCount = employees.filter(e => e.location === loc.name).length;
+      // Match via org_id (mobile link) OR location name fallback
       const checkinsToday = (attendance || []).filter(a => {
-        if (a.location !== loc.name) return false;
+        const matchOrg  = a.org_id === loc.id;
+        const matchName = a.location === loc.name;
+        if (!matchOrg && !matchName) return false;
         const d = new Date(a.date || a.created_at || a.check_in_time);
         return d >= todayStart;
       }).length;
@@ -303,7 +345,7 @@ app.get('/reports', async (req, res) => {
       { data: rawProfiles },
       { data: attendance }
     ] = await Promise.all([
-      supabase.from('profiles').select('*').eq('role', 'employee'),
+      supabase.from('profiles').select('*'),
       supabase.from('attendance').select('*')
     ]);
 
@@ -397,7 +439,7 @@ app.get('/payroll', async (req, res) => {
       { data: attendance },
       { data: savedPayroll }
     ] = await Promise.all([
-      supabase.from('profiles').select('*').eq('role', 'employee'),
+      supabase.from('profiles').select('*'),
       supabase.from('attendance').select('*'),
       supabase.from('payroll').select('*').eq('month', currMonth)
     ]);
@@ -468,13 +510,13 @@ async function syncLocationEmployeeCounts() {
       { data: emps },
       { data: locs }
     ] = await Promise.all([
-      supabase.from('profiles').select('location').eq('role', 'employee'),
-      supabase.from('locations').select('id, name')
+      supabase.from('profiles').select('location'),
+      supabase.from('organizations').select('id, name')
     ]);
     if (!emps || !locs) return;
     await Promise.all(locs.map(loc => {
       const count = emps.filter(e => e.location === loc.name).length;
-      return supabase.from('locations').update({ employees: count }).eq('id', loc.id);
+      return supabase.from('organizations').update({ employees: count }).eq('id', loc.id);
     }));
   } catch (err) {
     console.error("Failed to sync location counts:", err);
@@ -483,11 +525,39 @@ async function syncLocationEmployeeCounts() {
 
 app.post('/api/employees', async (req, res) => {
   try {
-    // Map dashboard field names → profiles column names
-    const { name, initials, color, department, position, email, phone, status, joindate, monthly_salary, location, picture } = req.body;
+    if (!process.env.SUPABASE_SERVICE_KEY) {
+      return res.status(500).json({ error: "SUPABASE_SERVICE_KEY is required in .env to create users." });
+    }
+
+    const { name, initials, color, department, position, email, phone, status, joindate, monthly_salary, location, picture, role, password } = req.body;
+    
+    // 1. Create Auth user so they can log into the mobile app
+    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+      user_metadata: { full_name: name }
+    });
+
+    if (authError) {
+      return res.status(500).json({ error: "Auth Error: " + authError.message });
+    }
+
+    const newUserId = authData.user.id;
+
+    // Find the organization ID based on the selected location name
+    let org_id = null;
+    if (location) {
+      const { data: orgData } = await supabase.from('organizations').select('id').eq('name', location).single();
+      if (orgData) org_id = orgData.id;
+    }
+
+    // 2. Insert into profiles with the new user ID
     const profilePayload = {
+      id: newUserId,
+      org_id,
       full_name: name,
-      role: 'employee',
+      role: role || 'employee',
       initials,
       color,
       department,
@@ -500,8 +570,11 @@ app.post('/api/employees', async (req, res) => {
       location,
       picture
     };
-    const { data, error } = await supabase.from('profiles').insert([profilePayload]).select();
-    if (error) return res.status(500).json({ error: error.message });
+    
+    // Use upsert in case a database trigger already created the profile row
+    const { data, error } = await supabase.from('profiles').upsert([profilePayload]).select();
+    if (error) return res.status(500).json({ error: "Profile Error: " + error.message });
+    
     await syncLocationEmployeeCounts();
     res.json(normalizeProfile(data[0]));
   } catch (err) {
@@ -511,9 +584,18 @@ app.post('/api/employees', async (req, res) => {
 
 app.put('/api/employees/:id', async (req, res) => {
   try {
-    const { name, department, position, email, phone, status, joindate, monthly_salary, location, picture } = req.body;
+    const { name, department, position, email, phone, status, joindate, monthly_salary, location, picture, role } = req.body;
+    
+    // Find the organization ID based on the selected location name
+    let org_id = null;
+    if (location) {
+      const { data: orgData } = await supabase.from('organizations').select('id').eq('name', location).single();
+      if (orgData) org_id = orgData.id;
+    }
+
     const profilePayload = {
       full_name: name,
+      org_id,
       department,
       position,
       email,
@@ -524,6 +606,8 @@ app.put('/api/employees/:id', async (req, res) => {
       location,
       picture
     };
+    if (role) profilePayload.role = role;
+    
     const { data, error } = await supabase.from('profiles').update(profilePayload).eq('id', req.params.id).select();
     if (error) return res.status(500).json({ error: error.message });
     await syncLocationEmployeeCounts();
@@ -544,21 +628,49 @@ app.delete('/api/employees/:id', async (req, res) => {
   }
 });
 
-// ─── API Routes for Locations ─────────────────────────────────────────────────
+// ─── API Routes for Locations (backed by organizations table) ──────────────────
 app.post('/api/locations', async (req, res) => {
-  const { data, error } = await supabase.from('locations').insert([req.body]).select();
+  // Map dashboard field names to organizations columns
+  const { name, lat, lng, radius, address } = req.body;
+  
+  // Generate a random 7-character alphanumeric invite code (like A4S4PLN)
+  const invite_code = Math.random().toString(36).substring(2, 9).toUpperCase();
+
+  // Find an admin to set as the owner_id (required by the database)
+  const { data: admins } = await supabase.from('profiles').select('id').eq('role', 'admin').limit(1);
+  const owner_id = (admins && admins.length > 0) ? admins[0].id : null;
+
+  const payload = {
+    name,
+    invite_code,
+    owner_id,
+    office_latitude: lat,
+    office_longitude: lng,
+    geofence_radius_meters: parseInt(radius) || 100,
+    address,
+    status: req.body.status || 'Active'
+  };
+  const { data, error } = await supabase.from('organizations').insert([payload]).select();
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data[0]);
+  res.json(normalizeOrg(data[0]));
 });
 
 app.put('/api/locations/:id', async (req, res) => {
-  const { data, error } = await supabase.from('locations').update(req.body).eq('id', req.params.id).select();
+  const { name, lat, lng, radius, address, status } = req.body;
+  const payload = {};
+  if (name    !== undefined) payload.name = name;
+  if (lat     !== undefined) payload.office_latitude = lat;
+  if (lng     !== undefined) payload.office_longitude = lng;
+  if (radius  !== undefined) payload.geofence_radius_meters = parseInt(radius) || 100;
+  if (address !== undefined) payload.address = address;
+  if (status  !== undefined) payload.status  = status;
+  const { data, error } = await supabase.from('organizations').update(payload).eq('id', req.params.id).select();
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data[0]);
+  res.json(normalizeOrg(data[0]));
 });
 
 app.delete('/api/locations/:id', async (req, res) => {
-  const { error } = await supabase.from('locations').delete().eq('id', req.params.id);
+  const { error } = await supabase.from('organizations').delete().eq('id', req.params.id);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ success: true });
 });
@@ -572,7 +684,7 @@ app.post('/api/payroll/generate', async (req, res) => {
       { data: attendance },
       { data: savedPayroll }
     ] = await Promise.all([
-      supabase.from('profiles').select('*').eq('role', 'employee'),
+      supabase.from('profiles').select('*'),
       supabase.from('attendance').select('*'),
       supabase.from('payroll').select('*').eq('month', currMonth)
     ]);

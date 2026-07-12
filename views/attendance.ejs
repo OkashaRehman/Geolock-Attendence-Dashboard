@@ -59,15 +59,15 @@ const pageDate  = new Date().toLocaleDateString('en-US', { weekday:'long', year:
     </select>
     <select class="filter-select" id="empFilter" onchange="applyFilters()">
       <option value="">All Employees</option>
-      <% records.forEach(r => { %>
-        <option value="<%= r.user_id %>"><%= r.emp ? r.emp.name : r.user_id.substring(0,8) %></option>
+      <% employees.forEach(e => { %>
+        <option value="<%= e.user_id || e.id %>"><%= e.name %></option>
       <% }) %>
     </select>
     <select class="filter-select" id="locFilter" onchange="applyFilters()">
       <option value="">All Locations</option>
-      <option value="Main Office">Main Office</option>
-      <option value="Branch Office">Branch Office</option>
-      <option value="Remote">Remote</option>
+      <% locations.forEach(l => { %>
+        <option value="<%= l.name %>"><%= l.name %></option>
+      <% }) %>
     </select>
     <select class="filter-select" id="statusFilter" onchange="applyFilters()">
       <option value="">All Statuses</option>
@@ -93,7 +93,7 @@ const pageDate  = new Date().toLocaleDateString('en-US', { weekday:'long', year:
     <thead>
       <tr>
         <th>USER ID</th><th>NAME</th><th>DEPARTMENT</th>
-        <th>CHECK IN</th><th>ADDRESS</th><th>STATUS</th>
+        <th>DATE</th><th>CHECK IN</th><th>ADDRESS</th><th>STATUS</th>
       </tr>
     </thead>
     <tbody id="tableBody"></tbody>
@@ -133,6 +133,8 @@ function renderTable(rows) {
   const tbody = document.getElementById('tableBody');
   tbody.innerHTML = filtered.map(r => {
     const time = r.check_in_time ? new Date(r.check_in_time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--';
+    const dateStr = r.date || r.created_at || r.check_in_time;
+    const date = dateStr ? new Date(dateStr).toLocaleDateString() : '--';
     const initials = r.emp?.initials || 'U';
     const color = r.emp?.color || '#6B7280';
     const name = r.emp?.name || ('User ' + (r.user_id ? r.user_id.substring(0,6) : 'Unknown'));
@@ -143,6 +145,7 @@ function renderTable(rows) {
       <td class="emp-id-cell" style="font-size:12px;" title="${r.user_id}">${r.user_id ? r.user_id.substring(0,8) : '--'}</td>
       <td><div class="emp-cell"><div class="emp-avatar" style="background:${color}">${initials}</div><div class="emp-name">${name.length > 15 ? name.slice(0,15)+'...' : name}</div></div></td>
       <td><span style="color:#64748b;font-size:13px;">${dept}</span></td>
+      <td><span class="checktime" style="color:#475569;font-weight:500;">${date}</span></td>
       <td><span class="checktime">${time}</span></td>
       <td><div class="loc-cell">${addr!=='--'?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>':''}${addr}</div></td>
       <td>${badgeHtml(r.status)}</td>
@@ -160,17 +163,38 @@ function renderTable(rows) {
 
 function applyDatePeriod() {
   const period = document.getElementById('dateFilter').value;
-  // Fallback to simple local filtering since mock periodData was removed
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  
+  let startDate = new Date(0); // All time
+  let endDate = new Date(now.getTime() + 24*60*60*1000); // far future
+  
+  if (period === 'today') {
+    startDate = todayStart;
+  } else if (period === 'yesterday') {
+    startDate = new Date(todayStart.getTime() - 24*60*60*1000);
+    endDate = todayStart;
+  } else if (period === 'week') {
+    startDate = new Date(todayStart.getTime() - 7*24*60*60*1000);
+  } else if (period === 'month') {
+    startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+  }
+
+  currentRows = rawRecords.filter(r => {
+    const dStr = r.date || r.created_at || r.check_in_time;
+    if (!dStr) return true;
+    const d = new Date(dStr);
+    return d >= startDate && d < endDate;
+  });
+
   renderTable(currentRows);
-  const labels = { today:'Today', yesterday:'Yesterday', week:'This Week', month:'This Month' };
-  showToast(`Showing records for: ${labels[period]}`, 'info');
 }
 
 function applyFilters() { renderTable(currentRows); }
 
 function exportCSV() {
   const includePayroll = document.getElementById('includePayrollCb')?.checked;
-  const headers = ['USER ID', 'Name', 'Department', 'Check In', 'Address', 'Status'];
+  const headers = ['USER ID', 'Name', 'Department', 'Date', 'Check In', 'Address', 'Status'];
   if (includePayroll) {
     headers.push('Monthly Salary ($)', 'Est. Daily Pay ($)');
   }
@@ -202,8 +226,10 @@ function exportCSV() {
   filtered.forEach(r => {
     const name = r.emp?.name || 'Unknown';
     const dept = r.emp?.department || 'Unknown';
-    const time = r.check_in_time ? new Date(r.check_in_time).toLocaleString() : '--';
-    const rowData = [r.user_id || '--', name, dept, time, r.address || '--', r.status || '--'];
+    const time = r.check_in_time ? new Date(r.check_in_time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--';
+    const dateStr = r.date || r.created_at || r.check_in_time;
+    const date = dateStr ? new Date(dateStr).toLocaleDateString() : '--';
+    const rowData = [r.user_id || '--', name, dept, date, time, r.address || '--', r.status || '--'];
     
     if (includePayroll) {
       const salary = r.emp?.monthly_salary || 0;
@@ -221,8 +247,8 @@ function exportCSV() {
   showToast('CSV exported successfully!', 'success');
 }
 
-// Initial render
-renderTable(currentRows);
+// Initial render with default date filter (today)
+applyDatePeriod();
 </script>
 
 <%- include('partials/footer') %>

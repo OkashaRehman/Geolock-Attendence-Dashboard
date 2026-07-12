@@ -56,6 +56,7 @@ const actions = `
     <div class="emp-card-pos"><%= ePos %></div>
     <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin:4px 0;">
       <span style="background:#ede9fe;color:#7c3aed;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;"><%= eDept %></span>
+      <span style="background:#fef08a;color:#854d0e;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;"><%= e.role === 'admin' ? 'Admin' : 'Employee' %></span>
       <span class="badge <%= eStatus==='Active' ? 'badge-active' : 'badge-leave' %>" style="font-size:11px;"><%= eStatus %></span>
     </div>
     <div class="emp-card-email"><%= eEmail %></div>
@@ -65,7 +66,7 @@ const actions = `
       <button class="btn btn-outline" style="color:#ef4444;border-color:#fca5a5;font-size:12px;padding:5px 12px;" type="button"
         onclick="deleteEmployee('<%= eId %>', '<%= eName.replace(/'/g,"\\'") %>')">Delete</button>
       <button class="btn btn-primary" style="font-size:12px;padding:5px 12px;" type="button"
-        onclick="editEmployee('<%= eId %>', '<%= eName.replace(/'/g,"\\'") %>', '<%= ePos.replace(/'/g,"\\'") %>', '<%= eDept %>', '<%= eEmail %>', '<%= ePhone %>', '<%= eJoin %>', '<%= eStatus %>', '<%= eSalary %>', '<%= (e.location||'').replace(/'/g,"\\'") %>', '<%= (e.picture||'').replace(/'/g,"\\'") %>')">Edit</button>
+        onclick="editEmployee('<%= eId %>', '<%= eName.replace(/'/g,"\\'") %>', '<%= e.role %>', '<%= ePos.replace(/'/g,"\\'") %>', '<%= eDept %>', '<%= eEmail %>', '<%= ePhone %>', '<%= eJoin %>', '<%= eStatus %>', '<%= eSalary %>', '<%= (e.location||'').replace(/'/g,"\\'") %>', '<%= (e.picture||'').replace(/'/g,"\\'") %>')">Edit</button>
     </div>
   </div>
   <% }) %>
@@ -110,8 +111,19 @@ const actions = `
             </select>
           </div>
           <div class="form-group">
-            <label class="form-label">Position / Role *</label>
+            <label class="form-label">System Role *</label>
+            <select class="form-input" id="fRole" required>
+              <option value="employee">Employee</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Position / Job Title *</label>
             <input class="form-input" id="fPosition" type="text" placeholder="e.g. Software Engineer" required />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Mobile App Password *</label>
+            <input class="form-input" id="fPassword" type="text" placeholder="Set a temporary password" required minlength="6" />
           </div>
           <div class="form-group">
             <label class="form-label">Location</label>
@@ -188,7 +200,14 @@ const actions = `
             </select>
           </div>
           <div class="form-group">
-            <label class="form-label">Position / Role *</label>
+            <label class="form-label">System Role *</label>
+            <select class="form-input" id="editRole" required>
+              <option value="employee">Employee</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Position / Job Title *</label>
             <input class="form-input" id="editPosition" type="text" required />
           </div>
           <div class="form-group">
@@ -257,15 +276,21 @@ async function submitAddEmployee(e) {
   const email     = document.getElementById('fEmail').value.trim();
   const phone     = document.getElementById('fPhone').value.trim() || '--';
   const dept      = document.getElementById('fDept').value;
+  const role      = document.getElementById('fRole').value;
   const position  = document.getElementById('fPosition').value.trim();
+  const password  = document.getElementById('fPassword').value;
   const joinDate  = document.getElementById('fJoinDate').value;
   const status    = document.getElementById('fStatus').value;
   const monthlySalary = parseFloat(document.getElementById('fMonthlySalary').value) || 5000;
   const loc      = document.getElementById('fLocation').value;
   const picture  = document.getElementById('fPicture').value.trim();
 
-  if (!firstName || !lastName || !email || !position || !dept || !phone || !loc || !joinDate || !status) {
+  if (!firstName || !lastName || !email || !password || !position || !dept || !phone || !loc || !joinDate || !status) {
     showToast('Please fill in all fields. No fields can be empty.', 'error');
+    return;
+  }
+  if (password.length < 6) {
+    showToast('Password must be at least 6 characters long.', 'error');
     return;
   }
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -289,6 +314,8 @@ async function submitAddEmployee(e) {
     initials,
     color,
     department: dept,
+    role,
+    password,
     position,
     email,
     phone,
@@ -359,9 +386,10 @@ async function deleteEmployee(id, name) {
   }
 }
 
-function editEmployee(id, name, position, dept, email, phone, joinDate, status, monthlySalary, location, picture) {
+function editEmployee(id, name, role, position, dept, email, phone, joinDate, status, monthlySalary, location, picture) {
   document.getElementById('editEmpId').value = id;
   document.getElementById('editName').value = name;
+  document.getElementById('editRole').value = role || 'employee';
   document.getElementById('editPosition').value = position;
   document.getElementById('editDept').value = dept;
   document.getElementById('editEmail').value = email;
@@ -378,6 +406,7 @@ async function submitEditEmployee(e) {
   e && e.preventDefault && e.preventDefault();
   const id = document.getElementById('editEmpId').value;
   const name = document.getElementById('editName').value.trim();
+  const role = document.getElementById('editRole').value;
   const position = document.getElementById('editPosition').value.trim();
   const dept = document.getElementById('editDept').value;
   const email = document.getElementById('editEmail').value.trim();
@@ -406,6 +435,7 @@ async function submitEditEmployee(e) {
     const payload = {
       name,
       department: dept,
+      role,
       position,
       email,
       phone,
